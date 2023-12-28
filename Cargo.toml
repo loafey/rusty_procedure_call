@@ -1,0 +1,16 @@
+workspace = { members = ["crates/rpc_derive"] }
+[package]
+name = "rrpc"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+
+[dependencies]        
+postcard = "1.0.8"
+serde = { version = "1.0.193", features = ["derive"] }
+thiserror = "1.0.52"
+tokio = { version = "1.35.1", features = ["rt", "tokio-macros", "macros", "net"] }
+rpc_derive = { path = "crates/rpc_derive" }
