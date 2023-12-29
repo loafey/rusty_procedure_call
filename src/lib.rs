@@ -5,6 +5,7 @@ pub use rpc_derive::rpc;
 
 mod error;
 
+#[allow(unused)]
 fn block_async<T>(v: impl Future<Output = T>) -> T {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
