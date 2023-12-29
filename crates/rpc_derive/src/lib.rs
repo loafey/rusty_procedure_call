@@ -1,24 +1,23 @@
 extern crate proc_macro;
 use proc_macro::TokenStream as TS;
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::{Ident, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{
-    punctuated::Punctuated, token::Comma, GenericParam, ImplItem, ItemImpl, Lifetime,
-    LifetimeParam, Pat, PatType, ReturnType, Type, TypeParam, Visibility,
+    punctuated::Punctuated, token::Comma, GenericParam, ImplItem, ItemImpl, Pat, PatType,
+    ReturnType, Type, Visibility,
 };
 
-fn get_generics(ty: &PatType) -> Punctuated<GenericParam, Comma> {
-    let mut res = Punctuated::new();
-    res
+fn get_generics(_ty: &PatType) -> Punctuated<GenericParam, Comma> {
+    Punctuated::new()
 }
 
 type Function = (Ident, Punctuated<PatType, Comma>, Option<Type>);
 struct FunctionTypes {
-    generics: Punctuated<GenericParam, Comma>,
+    _generics: Punctuated<GenericParam, Comma>,
     functions: Vec<Function>,
 }
 fn get_function_types(items: Vec<ImplItem>) -> FunctionTypes {
-    let mut generics = Punctuated::new();
+    let mut _generics = Punctuated::new();
     let mut functions = Vec::new();
     for item in items {
         if let ImplItem::Fn(func) = item {
@@ -34,7 +33,7 @@ fn get_function_types(items: Vec<ImplItem>) -> FunctionTypes {
                         is_self_ref = r.reference.is_some();
                     }
                     syn::FnArg::Typed(t) => {
-                        generics.extend(get_generics(&t));
+                        _generics.extend(get_generics(&t));
                         args.push(t);
                     }
                 }
@@ -49,7 +48,7 @@ fn get_function_types(items: Vec<ImplItem>) -> FunctionTypes {
         }
     }
     FunctionTypes {
-        generics,
+        _generics,
         functions,
     }
 }
@@ -72,7 +71,7 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
     let struct_name = create_ident(&format!("{}Rpc", this_type.to_token_stream()));
 
     let FunctionTypes {
-        generics,
+        _generics,
         functions,
     } = get_function_types(nodes.items);
 
@@ -111,15 +110,18 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
                     let mut stream = TcpStream::connect(&self.addr).await?;
 
                     let value = postcard::to_allocvec(& #arg_name :: #i #args)?;
+                    let len = value.len() as u64;
 
+                    stream.write_u64(len).await?;
                     stream.write_all(&value[..]).await?;
 
-                    let mut buf = Vec::new();
-                    stream.read_to_end(&mut buf).await?;
+                    let len = stream.read_u64().await? as usize;
+                    let mut buf = vec![0; len];
+                    stream.read_exact(&mut buf).await?;
 
                     let res = postcard :: from_bytes :: < #ret_string >(&buf[..])?;
 
-                    stream.shutdown();
+                    stream.shutdown().await?;
 
                     Ok(res)
                 }
@@ -147,6 +149,8 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
             #m => {
                 #res_call
                 let bytes = postcard::to_allocvec(&res)?;
+                let len = bytes.len() as u64;
+                stream.write_u64(len).await?;
                 stream.write_all(&bytes[..]).await?;
             },
         };
@@ -175,7 +179,7 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
 
     let arg_enum = quote! {
         #[allow(non_camel_case_types)]
-        #[derive(serde::Deserialize,serde::Serialize)]
+        #[derive(serde::Deserialize,serde::Serialize, Debug)]
         enum #arg_name {
             #arg_enum
         }
@@ -183,10 +187,11 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
 
     let structy = quote! {
         impl #this_type {
-            pub async fn serve(&mut self, stream: &mut tokio::net::TcpStream) -> Result<(), RpcError> {
+            pub async fn serve(&mut self, stream: &mut tokio::net::TcpStream) -> Result<(), crate::RpcError> {
                 use tokio::io::{AsyncWriteExt, AsyncReadExt};
-                let mut buf = Vec::new();
-                stream.read_to_end(&mut buf).await?;
+                let len = stream.read_u64().await?;
+                let mut buf = vec![0; len as usize];
+                stream.read_exact(&mut buf).await?;
                 let value = postcard::from_bytes(&buf[..])?;
                 #serve_impl
             }
@@ -213,9 +218,9 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
 #[proc_macro_attribute]
 pub fn rpc(_attr: TS, item: TS) -> TS {
     let org = TokenStream::from(item.clone());
-    if let Ok(nodes) = syn::parse::<ItemImpl>(item) {
+    if let Ok(nodes) = syn::parse::<ItemImpl>(item.clone()) {
         parse_impl_block(org, nodes)
     } else {
-        todo!()
+        panic!("using rpc on {item:?} is not supported",)
     }
 }
