@@ -4,4 +4,7 @@ use thiserror::Error;
 pub enum RpcError {
     #[error("io error")]
     IOError(#[from] std::io::Error),
+
+    #[error("serialize error")]
+    SerializeError(#[from] postcard::Error),
 }

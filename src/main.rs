@@ -1,6 +1,6 @@
 use error::RpcError;
 use rpc_derive::rpc;
-use std::error::Error;
+use std::{error::Error, fmt::format};
 use tokio::{
     io::AsyncWrite,
     net::{TcpListener, TcpStream},
@@ -25,15 +25,26 @@ async fn main() {
 
 async fn rpc(port: u16, others: Vec<u16>) -> Result<(), RpcError> {
     let listener = TcpListener::bind(&format!("127.0.0.1:{port}")).await?;
+    let mut me = Node { value: 0 };
+    let others = others
+        .into_iter()
+        .map(|n| NodeRpc::new(format!("127.0.0.1:{n}")))
+        .collect::<Vec<_>>();
+
+    for other in others {
+        tokio::task::spawn(async {
+            // tokio::
+        });
+    }
 
     loop {
-        let (socket, _) = listener.accept().await?;
+        let (mut socket, _) = listener.accept().await?;
+        me.serve(&mut socket).await?;
     }
-    Ok(())
 }
 
 struct Node {
-    addr: String,
+    value: usize,
 }
 #[rpc]
 impl Node {

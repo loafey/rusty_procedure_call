@@ -4,15 +4,15 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{
     punctuated::Punctuated, token::Comma, GenericParam, ImplItem, ItemImpl, Lifetime,
-    LifetimeParam, ReturnType, Type, TypeParam, Visibility,
+    LifetimeParam, Pat, PatType, ReturnType, Type, TypeParam, Visibility,
 };
 
-fn get_generics(ty: &Type) -> Punctuated<GenericParam, Comma> {
+fn get_generics(ty: &PatType) -> Punctuated<GenericParam, Comma> {
     let mut res = Punctuated::new();
     res
 }
 
-type Function = (Ident, Vec<TypeParam>, Option<Type>);
+type Function = (Ident, Punctuated<PatType, Comma>, Option<Type>);
 struct FunctionTypes {
     generics: Punctuated<GenericParam, Comma>,
     functions: Vec<Function>,
@@ -26,7 +26,7 @@ fn get_function_types(items: Vec<ImplItem>) -> FunctionTypes {
                 continue;
             }
             let func_name = func.sig.ident;
-            let mut args = Vec::new();
+            let mut args: Punctuated<_, Comma> = Punctuated::new();
             let mut is_self_ref = false;
             for arg in func.sig.inputs.into_iter() {
                 match arg {
@@ -34,7 +34,6 @@ fn get_function_types(items: Vec<ImplItem>) -> FunctionTypes {
                         is_self_ref = r.reference.is_some();
                     }
                     syn::FnArg::Typed(t) => {
-                        let t = t.ty;
                         generics.extend(get_generics(&t));
                         args.push(t);
                     }
@@ -45,7 +44,7 @@ fn get_function_types(items: Vec<ImplItem>) -> FunctionTypes {
                 ReturnType::Type(_, t) => Some(*t),
             };
             if is_self_ref {
-                functions.push((func_name, Vec::new(), ret_type));
+                functions.push((func_name, args, ret_type));
             }
         }
     }
@@ -55,108 +54,150 @@ fn get_function_types(items: Vec<ImplItem>) -> FunctionTypes {
     }
 }
 
+fn create_ident(s: &str) -> Ident {
+    syn::Ident::new(s, proc_macro2::Span::call_site())
+}
+
 fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
     let mut arg_enum = quote!();
-    let mut res_enum = quote!();
+    let mut new_impl = quote! {
+        pub fn new(addr: A) -> Self{
+            Self { addr }
+        }
+    };
+    let mut serve_impl = quote! {match value };
     let this_type = nodes.self_ty;
-    let mut args_generics: Punctuated<GenericParam, Comma> = Punctuated::new();
-    for item in nodes.items {
-        if let syn::ImplItem::Fn(func) = item {
-            if !matches!(func.vis, Visibility::Public(..)) {
-                continue;
-            }
-            let func_name = func.sig.ident;
-            let mut args = quote!();
-            let mut is_self_ref = false;
-            for arg in func.sig.inputs.into_iter() {
-                match arg {
-                    syn::FnArg::Receiver(r) => {
-                        is_self_ref = r.reference.is_some();
-                    }
-                    syn::FnArg::Typed(t) => {
-                        let t = t.ty;
-                        args_generics.extend(get_generics(&t));
-                        args = quote! {
-                            #args
-                            #t,
-                        }
-                    }
-                }
-            }
-            let ret_type = match func.sig.output {
-                ReturnType::Default => None,
-                ReturnType::Type(_, t) => Some(*t),
-            };
-            if is_self_ref {
-                arg_enum = quote! {
-                    #arg_enum
-                    #func_name ( #args ),
-                };
-                if let Some(ret_type) = ret_type {
-                    res_enum = quote! {
-                        #res_enum
-                        #func_name ( #ret_type ),
-                    };
+
+    let arg_name = create_ident(&format!("__{}RpcArg", this_type.to_token_stream()));
+    let struct_name = create_ident(&format!("{}Rpc", this_type.to_token_stream()));
+
+    let FunctionTypes {
+        generics,
+        functions,
+    } = get_function_types(nodes.items);
+
+    let mut serve_match = quote!();
+
+    for (i, t, r) in functions {
+        let ret_string = if let Some(ret) = &r {
+            quote!(#ret)
+        } else {
+            quote!(())
+        };
+        let args_without_types = t
+            .clone()
+            .into_iter()
+            .filter_map(|p| {
+                if let Pat::Ident(i) = *p.pat {
+                    Some(i.ident)
                 } else {
-                    res_enum = quote! {
-                        #res_enum
-                        #func_name,
-                    }
+                    None
+                }
+            })
+            .collect::<Punctuated<_, Comma>>();
+        new_impl = {
+            let args = if args_without_types.is_empty() {
+                quote!()
+            } else {
+                quote!((#args_without_types))
+            };
+
+            quote! {
+                #new_impl
+                pub async fn #i (&self, #t ) -> Result< #ret_string , crate::RpcError > {
+                    use tokio::net::TcpStream;
+                    use tokio::io::{ AsyncWriteExt, AsyncReadExt };
+
+                    let mut stream = TcpStream::connect(&self.addr).await?;
+
+                    let value = postcard::to_allocvec(& #arg_name :: #i #args)?;
+
+                    stream.write_all(&value[..]).await?;
+
+                    let mut buf = Vec::new();
+                    stream.read_to_end(&mut buf).await?;
+
+                    let res = postcard :: from_bytes :: < #ret_string >(&buf[..])?;
+
+                    stream.shutdown();
+
+                    Ok(res)
                 }
             }
+        };
+
+        let res_call = if !args_without_types.is_empty() {
+            quote!(
+                let res = self. #i (#args_without_types);
+            )
+        } else {
+            quote!(
+                let res = self.#i();
+            )
+        };
+
+        let m = if !args_without_types.is_empty() {
+            quote!(#arg_name :: #i (#args_without_types))
+        } else {
+            quote!(#arg_name :: #i)
+        };
+
+        serve_match = quote! {
+            #serve_match
+            #m => {
+                #res_call
+                let bytes = postcard::to_allocvec(&res)?;
+                stream.write_all(&bytes[..]).await?;
+            },
+        };
+
+        if !t.is_empty() {
+            let t = t
+                .into_iter()
+                .map(|t| t.ty)
+                .collect::<Punctuated<_, Comma>>();
+            arg_enum = quote! {
+                #arg_enum
+                #i (#t),
+            };
+        } else {
+            arg_enum = quote! {
+                #arg_enum
+                #i,
+            };
         }
     }
 
-    let arg_name = syn::Ident::new(
-        &format!("{}RpcArg", this_type.to_token_stream()),
-        proc_macro2::Span::call_site(),
-    );
-    let res_name = syn::Ident::new(
-        &format!("{}RpcRes", this_type.to_token_stream()),
-        proc_macro2::Span::call_site(),
+    serve_impl = quote!(
+        #serve_impl { #serve_match };
+        Ok(())
     );
 
-    let arg_enum = if args_generics.is_empty() {
-        quote!(
-            #[allow(non_camel_case_types)]
-            #[derive(serde::Deserialize,serde::Serialize)]
-            enum #arg_name {
-                #arg_enum
-            }
-        )
-    } else {
-        let mut punc = Punctuated::new();
-        punc.extend(args_generics);
-        let generics = syn::Generics {
-            lt_token: None,
-            params: punc,
-            gt_token: None,
-            where_clause: None,
-        };
-        quote!(
-            #[allow(non_camel_case_types)]
-            #[derive(serde::Deserialize,serde::Serialize)]
-            enum #arg_name #generics {
-                #arg_enum
-            }
-        )
-    };
-
-    let res_enum = quote! {
+    let arg_enum = quote! {
         #[allow(non_camel_case_types)]
         #[derive(serde::Deserialize,serde::Serialize)]
-        enum #res_name {
-            #res_enum
+        enum #arg_name {
+            #arg_enum
         }
     };
 
-    let struct_name = syn::Ident::new(
-        &format!("{}Rpc", this_type.to_token_stream()),
-        proc_macro2::Span::call_site(),
-    );
     let structy = quote! {
-        struct #struct_name<A: tokio::net::ToSocketAddrs> {
+        impl #this_type {
+            pub async fn serve(&mut self, stream: &mut tokio::net::TcpStream) -> Result<(), RpcError> {
+                use tokio::io::{AsyncWriteExt, AsyncReadExt};
+                let mut buf = Vec::new();
+                stream.read_to_end(&mut buf).await?;
+                let value = postcard::from_bytes(&buf[..])?;
+                #serve_impl
+            }
+        }
+
+        pub struct #struct_name<A: tokio::net::ToSocketAddrs> {
             addr: A
+        }
+
+        impl<A: tokio::net::ToSocketAddrs> #struct_name<A> {
+            #new_impl
         }
     };
 
@@ -164,7 +205,6 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
         #org
         #structy
         #arg_enum
-        #res_enum
     };
 
     output.into()
