@@ -1,7 +1,17 @@
+use std::future::Future;
+
 pub use error::RpcError;
 pub use rpc_derive::rpc;
 
 mod error;
+
+fn block_async<T>(v: impl Future<Output = T>) -> T {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed building the Runtime")
+        .block_on(v)
+}
 
 #[cfg(test)]
 mod sum_ports {
@@ -15,47 +25,63 @@ mod sum_ports {
         pub fn my_port(&self) -> u64 {
             self.port
         }
+
+        // Yea, this one doesn't really make sense, but it showcases that we can
+        // have mutability.
+        pub fn plus_one(&mut self) {
+            self.port += 1;
+        }
     }
+
+    const PORTS: [u64; 11] = [
+        8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090,
+    ];
 
     #[test]
     fn sum_ports() {
-        let ports = [
-            8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090,
-        ];
-        let sum = ports.into_iter().sum::<u64>();
-        let nodes = ports
+        let sum = PORTS.into_iter().sum::<u64>();
+        let nodes = PORTS
             .into_iter()
             .map(|port| PortHolderRpc::new(format!("127.0.0.1:{port}")));
 
-        let mut threads = Vec::new();
-        for port in ports {
-            threads.push(std::thread::spawn(move || {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("Failed building the Runtime")
-                    .block_on(rpc(port))
-            }));
+        // Spin up X number of RPC servers waiting for one request
+        for port in PORTS {
+            std::thread::spawn(move || crate::block_async(rpc(port, 1)));
         }
-        let mut total = 0;
-        for node in nodes {
-            let res = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("Failed building the Runtime")
-                .block_on(node.my_port())
-                .unwrap();
-            total += res;
+        let total = nodes
+            .map(|node| crate::block_async(node.my_port()).unwrap())
+            .sum();
+        assert_eq!(sum, total)
+    }
+
+    #[test]
+    fn sum_ports_plus_one() {
+        let sum = PORTS.into_iter().map(|p| p + 1).sum::<u64>();
+        let nodes = PORTS
+            .into_iter()
+            .map(|port| PortHolderRpc::new(format!("127.0.0.1:{port}")));
+
+        // Spin up X number of RPC servers waiting for one request
+        for port in PORTS {
+            std::thread::spawn(move || crate::block_async(rpc(port, 2)));
         }
+        let total = nodes
+            .map(|node| {
+                crate::block_async(node.plus_one()).unwrap();
+                crate::block_async(node.my_port()).unwrap()
+            })
+            .sum();
         assert_eq!(sum, total)
     }
 
     #[allow(unused)]
-    async fn rpc(port: u64) -> Result<(), crate::RpcError> {
-        let listener = TcpListener::bind(&format!("127.0.0.1:{port}")).await?;
+    async fn rpc(port: u64, serve_amount: usize) -> Result<(), crate::RpcError> {
+        let listener = TcpListener::bind(format!("127.0.0.1:{port}")).await?;
         let mut me = PortHolder { port };
-        let (mut socket, _) = listener.accept().await?;
-        me.serve(&mut socket).await?;
+        for _ in 0..serve_amount {
+            let (mut socket, _) = listener.accept().await?;
+            me.serve(&mut socket).await?;
+        }
         Ok(())
     }
 }
