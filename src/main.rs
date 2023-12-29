@@ -44,4 +44,10 @@ impl Node {
     pub fn alive(&self) -> bool {
         true
     }
+
+    pub fn add_one(&self, i: usize) -> usize {
+        i + 1
+    }
+
+    pub fn print(&self, string: String) {}
 }
