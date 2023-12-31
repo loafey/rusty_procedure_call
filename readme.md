@@ -3,6 +3,8 @@ More or less just a proof of concept for generating async RPC interfaces using
 Rust's macro system. This is far from production ready and should not be used
 in a professional manner. 
 
+The idea is to make it easier to write RPC interfacing without getting bogged down with working on networking and such.
+
 Built on top of [`tokio`](https://docs.rs/tokio/), and uses [`postcard`](https://docs.rs/postcard/) to serialize/deserialize messages.
 
 ## The gist of it
