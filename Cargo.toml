@@ -1,6 +1,6 @@
 workspace = { members = ["crates/rpc_derive"] }
 [package]
-name = "rrpc"
+name = "rusty_procedure_call"
 version = "0.1.0"
 edition = "2021"
 
