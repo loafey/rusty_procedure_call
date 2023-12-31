@@ -27,6 +27,7 @@ As said this crate is mostly a proof of concept, and lacks a few features:
 * Might be outside the scope of this project, but the ability to separate
   the client code and server code into two separate code bases. This might be beneficial in cases where the client does not need the server code and 
   vise-versa.
+* Proper macro errors and macro etiquette, still new to making macros.
 * Probably a lot more.
 
 ## Example
