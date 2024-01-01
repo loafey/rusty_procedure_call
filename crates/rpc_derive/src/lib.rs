@@ -28,8 +28,8 @@ pub fn rpc(attr: TS, item: TS) -> TS {
     let org = TokenStream::from(item.clone());
     if let Ok(nodes) = syn::parse::<ItemImpl>(item.clone()) {
         match attr {
-            Attr::Persistent => persistent(attr, org, nodes),
-            Attr::NonPersistent => non_persistent(attr, org, nodes),
+            Attr::Persistent => persistent(org, nodes),
+            Attr::NonPersistent => non_persistent(org, nodes),
         }
     } else {
         panic!("using rpc on {item:?} is not supported",)

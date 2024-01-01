@@ -7,8 +7,6 @@ use syn::{
     ReturnType, Type, Visibility,
 };
 
-use crate::Attr;
-
 fn get_generics(_ty: &PatType) -> Punctuated<GenericParam, Comma> {
     Punctuated::new()
 }
@@ -59,22 +57,13 @@ fn create_ident(s: &str) -> Ident {
     syn::Ident::new(s, proc_macro2::Span::call_site())
 }
 
-pub fn persistent(attr: Attr, org: TokenStream, nodes: ItemImpl) -> TS {
+pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
     let mut arg_enum = quote!();
-    let mut new_impl = match attr {
-        Attr::Persistent => {
-            quote! {
-                pub async fn new(addr: A) -> Result<Self, RpcError> {
-                    let stream = tokio::net::TcpStream::connect(&addr).await?;
-                    Ok(Self { addr, stream })
-                }
-            }
+    let mut new_impl = quote! {
+        pub async fn new(addr: A) -> Result<Self, RpcError> {
+            let stream = tokio::net::TcpStream::connect(&addr).await?;
+            Ok(Self { addr, stream })
         }
-        Attr::NonPersistent => quote! {
-            pub fn new(addr: A) -> Self {
-                Self { addr }
-            }
-        },
     };
     let mut serve_impl = quote! {match value };
     let this_type = nodes.self_ty;
@@ -113,58 +102,28 @@ pub fn persistent(attr: Attr, org: TokenStream, nodes: ItemImpl) -> TS {
                 quote!((#args_without_types))
             };
 
-            match attr {
-                Attr::Persistent => quote! {
-                    #new_impl
-                    // TODO should respect mutability here!
-                    pub async fn #i (&mut self, #t ) -> Result< #ret_string , crate::RpcError > {
-                        use tokio::net::TcpStream;
-                        use tokio::io::{ AsyncWriteExt, AsyncReadExt };
+            quote! {
+                #new_impl
+                // TODO should respect mutability here!
+                pub async fn #i (&mut self, #t ) -> Result< #ret_string , crate::RpcError > {
+                    use tokio::net::TcpStream;
+                    use tokio::io::{ AsyncWriteExt, AsyncReadExt };
 
-                        let stream = &mut self.stream;
+                    let stream = &mut self.stream;
 
-                        let value = ::rusty_procedure_call::postcard::to_allocvec(& #arg_name :: #i #args)?;
-                        let len = value.len() as u64;
+                    let value = ::rusty_procedure_call::postcard::to_allocvec(& #arg_name :: #i #args)?;
+                    let len = value.len() as u64;
 
-                        stream.write_u64(len).await?;
-                        stream.write_all(&value[..]).await?;
+                    stream.write_u64(len).await?;
+                    stream.write_all(&value[..]).await?;
 
-                        let len = stream.read_u64().await? as usize;
-                        let mut buf = vec![0; len];
-                        stream.read_exact(&mut buf).await?;
+                    let len = stream.read_u64().await? as usize;
+                    let mut buf = vec![0; len];
+                    stream.read_exact(&mut buf).await?;
 
-                        let res = ::rusty_procedure_call::postcard :: from_bytes :: < #ret_string >(&buf[..])?;
+                    let res = ::rusty_procedure_call::postcard :: from_bytes :: < #ret_string >(&buf[..])?;
 
-                        Ok(res)
-                    }
-                },
-                Attr::NonPersistent => {
-                    quote! {
-                        #new_impl
-                        // TODO should respect mutability here!
-                        pub async fn #i (&self, #t ) -> Result< #ret_string , crate::RpcError > {
-                            use tokio::net::TcpStream;
-                            use tokio::io::{ AsyncWriteExt, AsyncReadExt };
-
-                            let mut stream = TcpStream::connect(&self.addr).await?;
-
-                            let value = ::rusty_procedure_call::postcard::to_allocvec(& #arg_name :: #i #args)?;
-                            let len = value.len() as u64;
-
-                            stream.write_u64(len).await?;
-                            stream.write_all(&value[..]).await?;
-
-                            let len = stream.read_u64().await? as usize;
-                            let mut buf = vec![0; len];
-                            stream.read_exact(&mut buf).await?;
-
-                            let res = ::rusty_procedure_call::postcard :: from_bytes :: < #ret_string >(&buf[..])?;
-
-                            stream.shutdown().await?;
-
-                            Ok(res)
-                        }
-                    }
+                    Ok(res)
                 }
             }
         };
@@ -228,18 +187,11 @@ pub fn persistent(attr: Attr, org: TokenStream, nodes: ItemImpl) -> TS {
         }
     };
 
-    let rpc_struct = match attr {
-        Attr::Persistent => quote! {
-            pub struct #struct_name<A: tokio::net::ToSocketAddrs> {
-                addr: A,
-                stream: tokio::net::TcpStream,
-            }
-        },
-        Attr::NonPersistent => quote! {
-            pub struct #struct_name<A: tokio::net::ToSocketAddrs> {
-                addr: A
-            }
-        },
+    let rpc_struct = quote! {
+        pub struct #struct_name<A: tokio::net::ToSocketAddrs> {
+            addr: A,
+            stream: tokio::net::TcpStream,
+        }
     };
 
     let structy = quote! {

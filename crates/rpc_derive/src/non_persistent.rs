@@ -7,8 +7,6 @@ use syn::{
     ReturnType, Type, Visibility,
 };
 
-use crate::Attr;
-
 fn get_generics(_ty: &PatType) -> Punctuated<GenericParam, Comma> {
     Punctuated::new()
 }
@@ -59,7 +57,7 @@ fn create_ident(s: &str) -> Ident {
     syn::Ident::new(s, proc_macro2::Span::call_site())
 }
 
-pub fn non_persistent(attr: Attr, org: TokenStream, nodes: ItemImpl) -> TS {
+pub fn non_persistent(org: TokenStream, nodes: ItemImpl) -> TS {
     let mut arg_enum = quote!();
     let mut new_impl = quote! {
         pub fn new(addr: A) -> Self{
@@ -208,10 +206,7 @@ pub fn non_persistent(attr: Attr, org: TokenStream, nodes: ItemImpl) -> TS {
         }
     };
 
-    let temp = format!("{attr:?}");
-    let temp = quote!(const TEST: &str = #temp;);
     let output = quote! {
-        #temp
         #org
         #structy
         #arg_enum
