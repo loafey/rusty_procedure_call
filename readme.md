@@ -30,6 +30,7 @@ As said this crate is mostly a proof of concept, and lacks a few features:
   the client code and server code into two separate code bases. This might be beneficial in cases where the client does not need the server code and 
   vise-versa.
 * Proper macro errors and macro etiquette, still new to making macros.
+* Allow for persistent connections.
 * Probably a lot more.
 
 ## Example
