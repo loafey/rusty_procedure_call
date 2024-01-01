@@ -57,7 +57,7 @@ fn create_ident(s: &str) -> Ident {
     syn::Ident::new(s, proc_macro2::Span::call_site())
 }
 
-fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
+fn parse_impl_block(attr: Attr, org: TokenStream, nodes: ItemImpl) -> TS {
     let mut arg_enum = quote!();
     let mut new_impl = quote! {
         pub fn new(addr: A) -> Self{
@@ -206,7 +206,10 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
         }
     };
 
+    let temp = format!("{attr:?}");
+    let temp = quote!(const TEST: &str = #temp;);
     let output = quote! {
+        #temp
         #org
         #structy
         #arg_enum
@@ -215,11 +218,26 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
     output.into()
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+enum Attr {
+    Persistent,
+    #[default]
+    NonPersistent,
+}
+
 #[proc_macro_attribute]
-pub fn rpc(_attr: TS, item: TS) -> TS {
+pub fn rpc(attr: TS, item: TS) -> TS {
+    let attr = format!("{attr}");
+    let attr = if attr == "Persistent" {
+        Attr::Persistent
+    } else if attr.is_empty() {
+        Attr::NonPersistent
+    } else {
+        panic!("the attribute needs to be either `Persistent` or nothing at all")
+    };
     let org = TokenStream::from(item.clone());
     if let Ok(nodes) = syn::parse::<ItemImpl>(item.clone()) {
-        parse_impl_block(org, nodes)
+        parse_impl_block(attr, org, nodes)
     } else {
         panic!("using rpc on {item:?} is not supported",)
     }
