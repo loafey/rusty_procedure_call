@@ -21,19 +21,19 @@ wrapped in a `Result<T, RpcError>` to handle potential failure.
 See the example below for a working demonstration.
 
 ## The future
-As said this crate is mostly a proof of concept, and lacks a few features:
-* Currently users have to add `tokio` and `serde` as dependencies of their
-  projects, unsure if this is desired.
-* Documentation.
-* Support for generic parameters on the type we using `#[rpc]` on (unsure if doable or desirable).
-* Any kind of built-in security.
-* The ability to use something other than `postcard`, if need be.
-* Might be outside the scope of this project, but the ability to separate
-  the client code and server code into two separate code bases. This might be beneficial in cases where the client does not need the server code and 
-  vise-versa.
-* Proper macro errors and macro etiquette, still new to making macros.
-* Allow for persistent connections.
-* Probably a lot more.
+As said this crate is mostly a proof of concept, and could be improved in a number of ways. Listed here are some things I would like to work on:
+| Goal | Status |
+|------|--------|
+| Allow for persistent connections. | ⌛ |
+| The ability to use something other than `postcard`, if need be. | ❌ |
+| Documentation. | ❌ |
+| Support for generic parameters on the type we are using `#[rpc]` on (unsure if doable or desirable). | | 
+| Any kind of built-in security. | ❌ | 
+| Might be outside the scope of this project, but the ability to separate the client code and server code into two separate code bases. This might be beneficial in cases where the client does not need the server code and  vise-versa. | ❌ | 
+| Proper macro errors and macro etiquette, still new to making macros. | ❌ | 
+| Currently users have to add `tokio` and `serde` as dependencies of their projects, unsure if this is desired.  | ❌ |
+
+Probably a lot more outside of these points.
 
 ## Example
 See `src/tests/example.rs` for actual implementation.
