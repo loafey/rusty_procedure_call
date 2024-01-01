@@ -109,7 +109,7 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
 
                     let mut stream = TcpStream::connect(&self.addr).await?;
 
-                    let value = postcard::to_allocvec(& #arg_name :: #i #args)?;
+                    let value = ::rusty_procedure_call::postcard::to_allocvec(& #arg_name :: #i #args)?;
                     let len = value.len() as u64;
 
                     stream.write_u64(len).await?;
@@ -119,7 +119,7 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
                     let mut buf = vec![0; len];
                     stream.read_exact(&mut buf).await?;
 
-                    let res = postcard :: from_bytes :: < #ret_string >(&buf[..])?;
+                    let res = ::rusty_procedure_call::postcard :: from_bytes :: < #ret_string >(&buf[..])?;
 
                     stream.shutdown().await?;
 
@@ -148,7 +148,7 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
             #serve_match
             #m => {
                 #res_call
-                let bytes = postcard::to_allocvec(&res)?;
+                let bytes = ::rusty_procedure_call::postcard::to_allocvec(&res)?;
                 let len = bytes.len() as u64;
                 stream.write_u64(len).await?;
                 stream.write_all(&bytes[..]).await?;
@@ -192,7 +192,7 @@ fn parse_impl_block(org: TokenStream, nodes: ItemImpl) -> TS {
                 let len = stream.read_u64().await?;
                 let mut buf = vec![0; len as usize];
                 stream.read_exact(&mut buf).await?;
-                let value = postcard::from_bytes(&buf[..])?;
+                let value = ::rusty_procedure_call::postcard::from_bytes(&buf[..])?;
                 #serve_impl
             }
         }

@@ -22,6 +22,8 @@ See the example below for a working demonstration.
 
 ## The future
 As said this crate is mostly a proof of concept, and lacks a few features:
+* Currently users have to add `tokio` and `serde` as dependencies of their
+  projects, unsure if this is desired.
 * Documentation.
 * Support for generic parameters on the type we using `#[rpc]` on (unsure if doable or desirable).
 * Any kind of built-in security.
