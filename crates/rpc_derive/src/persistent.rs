@@ -7,9 +7,11 @@ use syn::{punctuated::Punctuated, token::Comma, ItemImpl, Pat};
 pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
     let mut arg_enum = quote!();
     let mut new_impl = quote! {
-        pub async fn new(addr: A) -> Result<Self, RpcError> {
-            let stream = tokio::net::TcpStream::connect(&addr).await?;
-            Ok(Self { addr, stream })
+        pub async fn new(addr: A, my_id: u64) -> Result<Self, RpcError> {
+            use tokio::io::AsyncWriteExt;
+            let mut stream = tokio::net::TcpStream::connect(&addr).await?;
+            stream.write_u64(my_id).await?;
+            Ok(Self { addr, stream, my_id })
         }
     };
     let mut serve_impl = quote! {match value };
@@ -61,12 +63,18 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
                     let value = ::rusty_procedure_call::postcard::to_allocvec(& #arg_name :: #i #args)?;
                     let len = value.len() as u64;
 
+                    //println!("Writing message of len {len}");
+
                     stream.write_u64(len).await?;
                     stream.write_all(&value[..]).await?;
+
+                    //println!("Wrote message of len {len}");
 
                     let len = stream.read_u64().await? as usize;
                     let mut buf = vec![0; len];
                     stream.read_exact(&mut buf).await?;
+
+                    //println!("Got response of len {len}");
 
                     let res = ::rusty_procedure_call::postcard :: from_bytes :: < #ret_string >(&buf[..])?;
 
@@ -95,10 +103,9 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
             #serve_match
             #m => {
                 #res_call
-                let bytes = ::rusty_procedure_call::postcard::to_allocvec(&res)?;
-                let len = bytes.len() as u64;
-                stream.write_u64(len).await?;
-                stream.write_all(&bytes[..]).await?;
+                let bytes = ::rusty_procedure_call::postcard::to_allocvec(&res).unwrap();
+                let mut stream = self.__client_channels.get_mut(&id).unwrap();
+                stream.send(bytes).await?;
             },
         };
 
@@ -123,7 +130,6 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
         #serve_impl {
             #serve_match
         };
-        Ok(())
     );
 
     let arg_enum = quote! {
@@ -138,6 +144,7 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
         pub struct #struct_name<A: tokio::net::ToSocketAddrs> {
             addr: A,
             stream: tokio::net::TcpStream,
+            my_id: u64
         }
         impl<A: tokio::net::ToSocketAddrs> #struct_name<A> {
             pub fn serve(&mut self) {
@@ -148,13 +155,39 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
 
     let structy = quote! {
         impl #this_type {
-            pub async fn serve(&mut self, stream: &mut tokio::net::TcpStream) -> Result<(), crate::RpcError> {
-                use tokio::io::{AsyncWriteExt, AsyncReadExt};
-                let len = stream.read_u64().await?;
-                let mut buf = vec![0; len as usize];
-                stream.read_exact(&mut buf).await?;
-                let value = ::rusty_procedure_call::postcard::from_bytes(&buf[..])?;
-                #serve_impl
+            pub async fn serve(&mut self, mut stream: tokio::net::TcpStream, id: u64, mut receiver: tokio::sync::mpsc::Receiver::<Vec<u8>>) -> Result<(), crate::RpcError> {
+                let sender = self.__sender.clone();
+                tokio::spawn(async move {
+                    loop {
+                        use tokio::io::{AsyncWriteExt, AsyncReadExt};
+                        let mut len_buf = [0; std::mem::size_of::<u64>()];
+                        if let Ok(message) = receiver.try_recv() {
+                            //println!("Sending over {message:?}");
+                            let len = message.len();
+                            stream.write_u64(len as u64).await.unwrap();
+                            stream.write_all(&message).await.unwrap();
+                        }
+                        if let Ok(b) = stream.try_read(&mut len_buf) {
+                            let len = u64::from_be_bytes(len_buf);
+                            //println!("Server got message of len {len} and {b} bytes");
+                            let mut buf = vec![0; len as usize];
+                            stream.read_exact(&mut buf).await.unwrap();
+                            //println!("{buf:?}");
+                            let value = ::rusty_procedure_call::postcard::from_bytes(&buf[..]).unwrap();
+                            sender.send((value, id)).await.unwrap();
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs_f32(1.0 / 300.0)).await;
+                    }
+                });
+                Ok(())
+            }
+
+            pub async fn handle_messages(&mut self) -> Result<(), crate::RpcError> {
+                if let Ok((value, id)) = self.__receiver.try_recv() {
+                    //println!("Handling message from {id}");
+                    #serve_impl
+                }
+                Ok(())
             }
         }
 

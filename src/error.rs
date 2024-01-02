@@ -7,4 +7,7 @@ pub enum RpcError {
 
     #[error("serialize error")]
     SerializeError(#[from] postcard::Error),
+
+    #[error("mpsc send error")]
+    MPSCSendError(#[from] tokio::sync::mpsc::error::SendError<Vec<u8>>),
 }
