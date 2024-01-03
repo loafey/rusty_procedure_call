@@ -1,11 +1,9 @@
 use proc_macro::TokenStream as TS;
 use syn::ItemStruct;
 
-use crate::{create_ident, create_struct_field};
+use crate::create_struct_field;
 
 pub fn persistent_struct(mut nodes: ItemStruct) -> TS {
-    let arg_name = create_ident(&format!("__{}RpcArg", nodes.ident));
-
     nodes.fields = match nodes.fields {
         syn::Fields::Named(mut f) => {
             f.named.push(create_struct_field(
@@ -14,11 +12,11 @@ pub fn persistent_struct(mut nodes: ItemStruct) -> TS {
             ));
             f.named.push(create_struct_field(
                 "__receiver",
-                &format!("tokio::sync::mpsc::Receiver<({arg_name}, u64)>"),
+                "tokio::sync::mpsc::Receiver<__MessageHandler>",
             ));
             f.named.push(create_struct_field(
                 "__sender",
-                &format!("tokio::sync::mpsc::Sender<({arg_name}, u64)>"),
+                "tokio::sync::mpsc::Sender<__MessageHandler>",
             ));
             f.named.push(create_struct_field("id", "usize"));
             syn::Fields::Named(f)

@@ -70,6 +70,7 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
 
                     //println!("Wrote message of len {len}");
 
+                    let time = std::time::Instant::now();
                     let len = stream.read_u64().await? as usize;
                     let mut buf = vec![0; len];
                     stream.read_exact(&mut buf).await?;
@@ -77,6 +78,7 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
                     //println!("Got response of len {len}");
 
                     let res = ::rusty_procedure_call::postcard :: from_bytes :: < #ret_string >(&buf[..])?;
+                    println!("client - reading response time: {}s", time.elapsed().as_secs_f32());
 
                     Ok(res)
                 }
@@ -102,10 +104,12 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
         serve_match = quote! {
             #serve_match
             #m => {
+                let time = std::time::Instant::now();
                 #res_call
                 let bytes = ::rusty_procedure_call::postcard::to_allocvec(&res).unwrap();
                 let mut stream = self.__client_channels.get_mut(&id).unwrap();
                 stream.send(bytes).await?;
+                println!("server - process time: {}s", time.elapsed().as_secs_f32());
             },
         };
 
@@ -174,18 +178,30 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
                             stream.read_exact(&mut buf).await.unwrap();
                             //println!("{buf:?}");
                             let value = ::rusty_procedure_call::postcard::from_bytes(&buf[..]).unwrap();
-                            sender.send((value, id)).await.unwrap();
+                            sender.send(__MessageHandler::Message((value, id))).await.unwrap();
                         }
-                        tokio::time::sleep(std::time::Duration::from_secs_f32(1.0 / 300.0)).await;
+                        // this should not be needed! causes deadlock when removed
+                        //tokio::time::sleep(std::time::Duration::from_secs_f32(1.0 / 300.0)).await;
                     }
                 });
                 Ok(())
             }
 
             pub async fn handle_messages(&mut self) -> Result<(), crate::RpcError> {
-                if let Ok((value, id)) = self.__receiver.try_recv() {
+                if let Some(value) = self.__receiver.recv().await {
+                    match value {
+                        __MessageHandler::Message((value, id)) => {
+                            #serve_impl
+                        },
+                        __MessageHandler::NewConnection(mut socket) => {
+                            let id = socket.read_u64().await?;
+                            println!("Got client: {id}");
+                            let (sender, receiver) = tokio::sync::mpsc::channel(10);
+                            self.__client_channels.insert(id, sender);
+                            self.serve(socket, id, receiver).await?;
+                        }
+                    }
                     //println!("Handling message from {id}");
-                    #serve_impl
                 }
                 Ok(())
             }
@@ -198,7 +214,14 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
         }
     };
 
+    let message_handler_message = create_ident("__MessageHandler");
+    let message_handler_message = quote!(enum #message_handler_message {
+        NewConnection(tokio::net::TcpStream),
+        Message(( #arg_name , u64))
+    });
+
     let output = quote! {
+        #message_handler_message
         #org
         #structy
         #arg_enum
