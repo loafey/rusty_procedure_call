@@ -10,6 +10,7 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
         pub async fn new(addr: A, my_id: u64) -> Result<Self, RpcError> {
             use tokio::io::AsyncWriteExt;
             let mut stream = tokio::net::TcpStream::connect(&addr).await?;
+            stream.set_nodelay(true)?;
             stream.write_u64(my_id).await?;
             Ok(Self { addr, stream, my_id })
         }
@@ -68,17 +69,13 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
                     stream.write_u64(len).await?;
                     stream.write_all(&value[..]).await?;
 
-                    //println!("Wrote message of len {len}");
-
-                    let time = std::time::Instant::now();
+                    // Bottleneck here!
                     let len = stream.read_u64().await? as usize;
                     let mut buf = vec![0; len];
                     stream.read_exact(&mut buf).await?;
 
-                    //println!("Got response of len {len}");
 
                     let res = ::rusty_procedure_call::postcard :: from_bytes :: < #ret_string >(&buf[..])?;
-                    println!("client - reading response time: {}s", time.elapsed().as_secs_f32());
 
                     Ok(res)
                 }
@@ -104,12 +101,10 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
         serve_match = quote! {
             #serve_match
             #m => {
-                let time = std::time::Instant::now();
                 #res_call
                 let bytes = ::rusty_procedure_call::postcard::to_allocvec(&res)?;
                 let mut stream = self.__client_channels.get_mut(&id).ok_or(::rusty_procedure_call::RpcError::MissingClient)?;
                 stream.send(bytes).await?;
-                println!("server - process time: {}s", time.elapsed().as_secs_f32());
             },
         };
 
