@@ -106,8 +106,8 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
             #m => {
                 let time = std::time::Instant::now();
                 #res_call
-                let bytes = ::rusty_procedure_call::postcard::to_allocvec(&res).unwrap();
-                let mut stream = self.__client_channels.get_mut(&id).unwrap();
+                let bytes = ::rusty_procedure_call::postcard::to_allocvec(&res)?;
+                let mut stream = self.__client_channels.get_mut(&id).ok_or(::rusty_procedure_call::RpcError::MissingClient)?;
                 stream.send(bytes).await?;
                 println!("server - process time: {}s", time.elapsed().as_secs_f32());
             },
@@ -158,30 +158,46 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
     };
 
     let structy = quote! {
+        enum __ClientHandler {
+            Message( #arg_name ),
+            ToSend( Vec<u8> ),
+        }
         impl #this_type {
-            pub async fn serve(&mut self, mut stream: tokio::net::TcpStream, id: u64, mut receiver: tokio::sync::mpsc::Receiver::<Vec<u8>>) -> Result<(), crate::RpcError> {
+            pub async fn serve(&mut self, stream: tokio::net::TcpStream, id: u64, mut message_receiver: tokio::sync::mpsc::Receiver::<Vec<u8>>) -> Result<(), crate::RpcError> {
+                use tokio::io::{split, AsyncWriteExt, AsyncReadExt};
                 let sender = self.__sender.clone();
-                tokio::spawn(async move {
-                    loop {
-                        use tokio::io::{AsyncWriteExt, AsyncReadExt};
-                        let mut len_buf = [0; std::mem::size_of::<u64>()];
-                        if let Ok(message) = receiver.try_recv() {
-                            //println!("Sending over {message:?}");
-                            let len = message.len();
-                            stream.write_u64(len as u64).await.unwrap();
-                            stream.write_all(&message).await.unwrap();
+                let (mut reader, mut writer) = split(stream);
+                let (client_sender, mut client_reciever) = tokio::sync::mpsc::channel(10);
+                tokio::spawn({
+                    let client_sender = client_sender.clone();
+                    async move {
+                        while let Some(message) = message_receiver.recv().await {
+                            client_sender.send(__ClientHandler::ToSend(message)).await.unwrap();
                         }
-                        if let Ok(b) = stream.try_read(&mut len_buf) {
-                            let len = u64::from_be_bytes(len_buf);
-                            //println!("Server got message of len {len} and {b} bytes");
+                    }
+                });
+                tokio::spawn({
+                    async move {
+                        while let Ok(len) = reader.read_u64().await {
                             let mut buf = vec![0; len as usize];
-                            stream.read_exact(&mut buf).await.unwrap();
-                            //println!("{buf:?}");
+                            reader.read_exact(&mut buf).await.unwrap();
                             let value = ::rusty_procedure_call::postcard::from_bytes(&buf[..]).unwrap();
-                            sender.send(__MessageHandler::Message((value, id))).await.unwrap();
+                            client_sender.send(__ClientHandler::Message(value)).await.unwrap();
                         }
-                        // this should not be needed! causes deadlock when removed
-                        //tokio::time::sleep(std::time::Duration::from_secs_f32(1.0 / 300.0)).await;
+                    }
+                });
+                tokio::spawn(async move {
+                    while let Some(message) = client_reciever.recv().await {
+                        match message {
+                            __ClientHandler::Message(message) => {
+                                sender.send(__MessageHandler::Message((message, id))).await.unwrap();
+                            }
+                            __ClientHandler::ToSend(message) => {
+                                let len = message.len();
+                                writer.write_u64(len as u64).await.unwrap();
+                                writer.write_all(&message).await.unwrap();
+                            }
+                        }
                     }
                 });
                 Ok(())
@@ -195,7 +211,6 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
                         },
                         __MessageHandler::NewConnection(mut socket) => {
                             let id = socket.read_u64().await?;
-                            println!("Got client: {id}");
                             let (sender, receiver) = tokio::sync::mpsc::channel(10);
                             self.__client_channels.insert(id, sender);
                             self.serve(socket, id, receiver).await?;

@@ -2,6 +2,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum RpcError {
+    #[error("missing client")]
+    MissingClient,
+
     #[error("io error")]
     IOError(#[from] std::io::Error),
 
