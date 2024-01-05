@@ -1,5 +1,5 @@
 use non_persistent::non_persistent;
-use persistent::persistent;
+use persistent_message::persistent;
 use persistent_struct::persistent_struct;
 use proc_macro::TokenStream as TS;
 use proc_macro2::{Ident, TokenStream};
@@ -9,7 +9,7 @@ use syn::{
 };
 
 mod non_persistent;
-mod persistent;
+mod persistent_message;
 mod persistent_struct;
 
 fn get_generics(_ty: &PatType) -> Punctuated<GenericParam, Comma> {
@@ -90,7 +90,7 @@ pub fn rpc(attr: TS, item: TS) -> TS {
     } else if attr.is_empty() {
         Attr::NonPersistent
     } else {
-        panic!("the attribute needs to be either `Persistent`, `PersistentClient, <type>` or nothing at all")
+        panic!("the attribute needs to be either `Persistent`, `Persistent  , <type>` or nothing at all")
     };
     let org = TokenStream::from(item.clone());
     if let Ok(nodes) = syn::parse::<ItemImpl>(item.clone()) {
