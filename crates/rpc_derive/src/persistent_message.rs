@@ -121,14 +121,14 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
     let server_struct = quote! {
         pub struct #server_name {
             port: u16,
-            inner: #this_type,
+            auth: u64,
             connections: std::collections::HashMap<u64, #client_connection_name>,
         }
         impl #server_name {
-            pub fn new(inner: #this_type, port: u16) -> Self {
+            pub fn new(port: u16) -> Self {
                 Self {
                     port,
-                    inner,
+                    auth: u64::MAX,
                     connections: std::collections::HashMap::new()
                 }
             }
@@ -159,6 +159,11 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
                                         udp: unsafe { std::mem::zeroed() },
                                     }) {
                                         panic!("TODO: Double TCP connection! Please add more info here!");
+                                    } else {
+                                        if self.auth == u64::MAX {
+                                            self.auth = id;
+                                            println!("{RED}SERVER{RESET} - setting connection {id} as authorative client");
+                                        }
                                     }
                                 }
                                 Message::ConnectUdp(id) => {
