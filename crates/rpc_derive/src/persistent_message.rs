@@ -132,7 +132,7 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
                     connections: std::collections::HashMap::new()
                 }
             }
-            pub fn serve(self) -> Result<std::thread::JoinHandle<()>, ::rusty_procedure_call::RpcError> {
+            pub fn serve(mut self) -> Result<std::thread::JoinHandle<()>, ::rusty_procedure_call::RpcError> {
                 use message_io::{
                     network::{NetEvent, Transport::*},
                     node::{self, NodeEvent},
@@ -150,8 +150,36 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
                             // self.connections.insert(endpoint, listener);
                         }, // Tcp or Ws
                         NetEvent::Message(endpoint, data) => {
-                            println!("Server - Received: {} {endpoint:?}", String::from_utf8_lossy(data));
-                            handler.network().send(endpoint, data);
+                            let message: Message = postcard::from_bytes(&data).unwrap();
+                            match message {
+                                Message::ConnectTcp(id) => {
+                                    println!("{RED}SERVER{RESET} - Starting TCP connection from: {endpoint}");
+                                    if let Some(_) = self.connections.insert(id, #client_connection_name {
+                                        tcp: endpoint,
+                                        udp: unsafe { std::mem::zeroed() },
+                                    }) {
+                                        panic!("TODO: Double TCP connection! Please add more info here!");
+                                    }
+                                }
+                                Message::ConnectUdp(id) => {
+                                    println!("{RED}SERVER{RESET} - Starting UDP connection from: {endpoint}");
+                                    if let Some(r) = self.connections.get_mut(&id){
+                                        if r.udp == unsafe { std::mem::zeroed() } {
+                                            r.udp = endpoint;
+                                            let ret = postcard::to_allocvec(&Message::OkUdp).unwrap();
+                                            handler.network().send(r.tcp, &ret);
+                                        } else {
+                                            panic!("TODO: Double UDP connection!");
+                                        }
+                                    } else {
+                                        panic!("TODO: Unknown UDP connection!!");
+                                    }
+                                }
+                                _ => {
+                                    let ret = postcard::to_allocvec(&Message::Ok).unwrap();
+                                    handler.network().send(endpoint, &ret);
+                                }
+                            };
                         }
                         NetEvent::Disconnected(_endpoint) => println!("Client disconnected"), //Tcp or Ws
                     });
@@ -163,6 +191,7 @@ pub fn persistent(org: TokenStream, nodes: ItemImpl) -> TS {
     };
 
     let client_connection = quote! {
+        #[derive(Debug)]
         pub struct #client_connection_name {
             udp: message_io::network::Endpoint,
             tcp: message_io::network::Endpoint
